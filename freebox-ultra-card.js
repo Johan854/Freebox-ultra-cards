@@ -6,7 +6,7 @@
  * Entités issues de l'intégration officielle « Freebox ».
  */
 
-const CARD_VERSION = "1.0.0";
+const CARD_VERSION = "1.1.0";
 
 const DEFAULTS = {
   name: "Freebox Ultra",
@@ -22,15 +22,20 @@ const DEFAULTS = {
     "sensor.freebox_v9_r1_temperature_cpu_2",
     "sensor.freebox_v9_r1_temperature_cpu_3",
   ],
+  wan_entity: "binary_sensor.freebox_server_etat_du_reseau_etendu_wan",
+  external_ip_entity: "sensor.freebox_server_ip_externe",
+  uptime_entity: "sensor.freebox_server_temps_de_fonctionnement",
   missed_calls_entity: "sensor.freebox_v9_r1_appels_manques",
   mark_calls_button: "button.freebox_v9_r1_marquer_les_appels_comme_lus",
   reboot_button: "button.freebox_v9_r1_redemarrer",
+  show_network: true,
   show_cpu: true,
   show_calls: true,
   show_actions: true,
   temp_warn: 65,
   temp_alert: 80,
   scale: 1,
+  theme: "auto", // auto (suit le thème de Home Assistant), light, dark
   image_mode: "background",
   image: "",
 };
@@ -57,6 +62,31 @@ function formatRate(st) {
   if (bits >= 1e6) return { value: (bits / 1e6).toFixed(bits >= 1e8 ? 0 : 1), unit: "Mb/s" };
   if (bits >= 1e3) return { value: (bits / 1e3).toFixed(0), unit: "kb/s" };
   return { value: bits.toFixed(0), unit: "b/s" };
+}
+
+/* Temps de fonctionnement : secondes, minutes/heures/jours, ou date de démarrage (timestamp) */
+function formatUptime(st) {
+  if (unavailable(st)) return "—";
+  let secs;
+  if (isNum(st.state)) {
+    secs = Number(st.state);
+    const u = (st.attributes.unit_of_measurement || "").toLowerCase();
+    if (u === "ms") secs /= 1000;
+    else if (u === "min") secs *= 60;
+    else if (u === "h") secs *= 3600;
+    else if (u === "d" || u === "j") secs *= 86400;
+  } else {
+    const t = Date.parse(st.state);
+    if (isNaN(t)) return String(st.state);
+    secs = (Date.now() - t) / 1000;
+  }
+  if (!(secs >= 0)) return "—";
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  if (d > 0) return `${d} j ${h} h`;
+  if (h > 0) return `${h} h ${m} min`;
+  return `${m} min`;
 }
 
 class FreeboxUltraCard extends HTMLElement {
@@ -89,7 +119,7 @@ class FreeboxUltraCard extends HTMLElement {
     const sig = this._entityIds().map((e) => {
       const s = hass.states[e];
       return s ? s.state + "|" + (s.attributes.unit_of_measurement || "") : "x";
-    }).join(";");
+    }).join(";") + "#" + (this._isDark() ? "d" : "l");
     if (sig !== this._sig) {
       this._sig = sig;
       this._render();
@@ -105,8 +135,18 @@ class FreeboxUltraCard extends HTMLElement {
     return [
       c.device_tracker_entity, c.wifi_entity, c.download_entity, c.upload_entity,
       c.fan_entity, c.temperature_entity, c.missed_calls_entity,
+      c.wan_entity, c.external_ip_entity, c.uptime_entity,
       ...(c.cpu_entities || []),
     ].filter(Boolean);
+  }
+
+  _isDark() {
+    const t = this._config && this._config.theme;
+    if (t === "dark") return true;
+    if (t === "light") return false;
+    const dm = this._hass && this._hass.themes && this._hass.themes.darkMode;
+    if (typeof dm === "boolean") return dm;
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   }
 
   _state(id) {
@@ -159,9 +199,20 @@ class FreeboxUltraCard extends HTMLElement {
     const callsOk = !unavailable(calls) && isNum(calls.state);
     const callsN = callsOk ? Number(calls.state) : 0;
 
+    const wan = this._state(c.wan_entity);
+    const wanKnown = !unavailable(wan);
+    const wanOn = wan && wan.state === "on";
+    const wanTxt = !wanKnown ? "Indisponible" : wanOn ? "Connecté" : "Déconnecté";
+    const wanCls = !wanKnown ? "off" : wanOn ? "ok" : "alert";
+    const ipSt = this._state(c.external_ip_entity);
+    const ipTxt = unavailable(ipSt) ? "—" : ipSt.state;
+    const upTxt = formatUptime(this._state(c.uptime_entity));
+    const showNet = c.show_network && (c.wan_entity || c.external_ip_entity || c.uptime_entity);
+
+    const dark = this._isDark();
     const imageUrl = c.image ? esc(c.image) : "";
     const bg = imageUrl && c.image_mode === "background"
-      ? `background-image: linear-gradient(160deg, rgba(14,16,28,.78), rgba(14,16,28,.9)), url('${imageUrl}'); background-size: cover; background-position: center;`
+      ? `background-image: linear-gradient(160deg, ${dark ? "rgba(14,16,28,.78), rgba(14,16,28,.9)" : "rgba(255,255,255,.82), rgba(245,246,250,.92)"}), url('${imageUrl}'); background-size: cover; background-position: center;`
       : "";
     const banner = imageUrl && c.image_mode === "banner"
       ? `<div class="banner" style="background-image:url('${imageUrl}')"></div>`
@@ -173,36 +224,54 @@ class FreeboxUltraCard extends HTMLElement {
       <style>
         :host { display:block; font-size: calc(16px * ${Number(c.scale) || 1}); }
         * { box-sizing: border-box; }
+        ha-card.dark {
+          --fb-text: #f4f6fb; --fb-bg: linear-gradient(160deg, #1b1e32 0%, #241a2a 55%, #2d1519 100%);
+          --fb-border: rgba(255,255,255,.14); --fb-shadow: 0 .6em 2em rgba(0,0,0,.35);
+          --fb-glass: rgba(255,255,255,.07); --fb-glass-b: rgba(255,255,255,.13);
+          --fb-fill: rgba(255,255,255,.09); --fb-fill-b: rgba(255,255,255,.16); --fb-press: rgba(255,255,255,.2);
+          --fb-ok: #3ddc84; --fb-ok-t: #7ef0ae; --fb-warn: #ffb86b; --fb-warn-t: #ffc680;
+          --fb-alert: #ff5a5f; --fb-alert-t: #ff8a8e; --fb-dl: #7cc4ff; --fb-ul: #ffb86b; --fb-neutral: #8a8f9c;
+          --fb-ok-bg: rgba(61,220,132,.18); --fb-alert-bg: rgba(255,90,95,.12);
+        }
+        ha-card.light {
+          --fb-text: #1c2030; --fb-bg: linear-gradient(160deg, #f8f9fd 0%, #eef1f8 55%, #f8eff0 100%);
+          --fb-border: rgba(20,24,40,.12); --fb-shadow: 0 .4em 1.4em rgba(20,24,40,.12);
+          --fb-glass: rgba(255,255,255,.7); --fb-glass-b: rgba(20,24,40,.1);
+          --fb-fill: rgba(20,24,40,.05); --fb-fill-b: rgba(20,24,40,.14); --fb-press: rgba(20,24,40,.12);
+          --fb-ok: #1a9d55; --fb-ok-t: #12803f; --fb-warn: #d08416; --fb-warn-t: #a8620a;
+          --fb-alert: #d32f35; --fb-alert-t: #b3242a; --fb-dl: #1769c2; --fb-ul: #c0640f; --fb-neutral: #8a8f9c;
+          --fb-ok-bg: rgba(26,157,85,.12); --fb-alert-bg: rgba(211,47,53,.1);
+        }
         ha-card {
-          position: relative; overflow: hidden; color: #f4f6fb;
-          border-radius: 1.5em; padding: 0; border: 1px solid rgba(255,255,255,.14);
-          background: linear-gradient(160deg, #1b1e32 0%, #241a2a 55%, #2d1519 100%);
+          position: relative; overflow: hidden; color: var(--fb-text);
+          border-radius: 1.5em; padding: 0; border: 1px solid var(--fb-border);
+          background: var(--fb-bg);
           ${bg}
-          box-shadow: 0 .6em 2em rgba(0,0,0,.35);
+          box-shadow: var(--fb-shadow);
         }
         .banner { height: 7em; background-size: cover; background-position: center; }
         .wrap { padding: 1.1em; display: flex; flex-direction: column; gap: .9em; }
         .glass {
-          background: rgba(255,255,255,.07);
+          background: var(--fb-glass);
           backdrop-filter: blur(18px) saturate(140%);
           -webkit-backdrop-filter: blur(18px) saturate(140%);
-          border: 1px solid rgba(255,255,255,.13);
+          border: 1px solid var(--fb-glass-b);
           border-radius: 1.1em;
         }
         .head { display:flex; align-items:center; justify-content:space-between; gap:.8em; padding: .9em 1em; }
         .title { display:flex; flex-direction:column; gap:.2em; min-width:0; }
         .title b { font-size: 1.15em; font-weight: 650; letter-spacing:.2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .status { display:inline-flex; align-items:center; gap:.45em; font-size:.82em; opacity:.92; }
-        .dot { width:.6em; height:.6em; border-radius:50%; background:#8a8f9c; box-shadow:0 0 .6em currentColor; }
-        .status.ok .dot { background:#3ddc84; color:#3ddc84; }
-        .status.alert .dot { background:#ff5a5f; color:#ff5a5f; }
+        .dot { width:.6em; height:.6em; border-radius:50%; background:var(--fb-neutral); box-shadow:0 0 .6em currentColor; flex:none; }
+        .ok .dot { background:var(--fb-ok); color:var(--fb-ok); }
+        .alert .dot { background:var(--fb-alert); color:var(--fb-alert); }
         button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; -webkit-tap-highlight-color: transparent; }
         .wifi {
           display:inline-flex; align-items:center; gap:.5em; padding:.5em .85em; border-radius:2em;
-          background: rgba(255,255,255,.09); border:1px solid rgba(255,255,255,.14); font-size:.85em; font-weight:600;
+          background: var(--fb-fill); border:1px solid var(--fb-fill-b); font-size:.85em; font-weight:600;
           transition: background .2s, border-color .2s;
         }
-        .wifi.on { background: rgba(61,220,132,.18); border-color: rgba(61,220,132,.5); }
+        .wifi.on { background: var(--fb-ok-bg); border-color: var(--fb-ok); }
         .wifi.off { opacity:.75; }
         .wifi svg { width:1.2em; height:1.2em; fill: currentColor; }
         .speeds { display:grid; grid-template-columns: 1fr 1fr; gap:.7em; }
@@ -210,31 +279,35 @@ class FreeboxUltraCard extends HTMLElement {
         .speed .lbl { font-size:.74em; text-transform:uppercase; letter-spacing:.08em; opacity:.7; display:flex; align-items:center; gap:.4em; }
         .speed .val { font-size:1.9em; font-weight:700; line-height:1.05; font-variant-numeric: tabular-nums; }
         .speed .val small { font-size:.42em; font-weight:600; opacity:.75; margin-left:.25em; }
-        .speed.dl .lbl { color:#7cc4ff; } .speed.ul .lbl { color:#ffb86b; }
+        .speed.dl .lbl { color:var(--fb-dl); } .speed.ul .lbl { color:var(--fb-ul); }
+        .net { display:grid; grid-template-columns: repeat(auto-fit, minmax(8.2em, 1fr)); gap:.4em .8em; padding:.8em 1em; }
+        .net button { text-align:left; display:flex; flex-direction:column; gap:.2em; min-width:0; }
+        .net .nl { font-size:.7em; text-transform:uppercase; letter-spacing:.08em; opacity:.65; }
+        .net .nv { font-size:.95em; font-weight:650; display:flex; align-items:center; gap:.45em; overflow-wrap:anywhere; font-variant-numeric: tabular-nums; }
         .section-title { font-size:.74em; text-transform:uppercase; letter-spacing:.08em; opacity:.65; margin: .1em .2em -.3em; }
         .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(5.2em, 1fr)); gap:.6em; }
         .tile { padding:.65em .5em; display:flex; flex-direction:column; align-items:center; gap:.2em;
-          background: rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.12); border-radius:1em; }
+          background: var(--fb-glass); border:1px solid var(--fb-glass-b); border-radius:1em; }
         .tile .tl { font-size:.7em; opacity:.7; text-transform:uppercase; letter-spacing:.06em; }
         .tile .tv { font-size:1.25em; font-weight:650; font-variant-numeric: tabular-nums; }
         .tile .tv small { font-size:.6em; opacity:.75; margin-left:.1em; }
-        .temp.ok { border-color: rgba(61,220,132,.4); } .temp.ok .tv { color:#7ef0ae; }
-        .temp.warn { border-color: rgba(255,184,107,.55); } .temp.warn .tv { color:#ffc680; }
-        .temp.alert { border-color: rgba(255,90,95,.65); background: rgba(255,90,95,.12); } .temp.alert .tv { color:#ff8a8e; }
+        .temp.ok { border-color: var(--fb-ok); } .temp.ok .tv { color:var(--fb-ok-t); }
+        .temp.warn { border-color: var(--fb-warn); } .temp.warn .tv { color:var(--fb-warn-t); }
+        .temp.alert { border-color: var(--fb-alert); background: var(--fb-alert-bg); } .temp.alert .tv { color:var(--fb-alert-t); }
         .temp.off .tv { opacity:.5; }
         .calls { display:flex; align-items:center; justify-content:space-between; gap:.8em; padding:.8em 1em; }
         .calls .info { display:flex; align-items:center; gap:.7em; min-width:0; }
         .badge { min-width:1.9em; height:1.9em; border-radius:1em; display:inline-flex; align-items:center; justify-content:center;
-          font-weight:700; padding:0 .55em; background: rgba(255,255,255,.12); }
-        .badge.has { background:#cd1e25; box-shadow: 0 0 .9em rgba(205,30,37,.55); }
-        .btn { padding:.55em .95em; border-radius:.8em; background: rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.16);
+          font-weight:700; padding:0 .55em; background: var(--fb-fill-b); }
+        .badge.has { background:#cd1e25; color:#fff; box-shadow: 0 0 .9em rgba(205,30,37,.45); }
+        .btn { padding:.55em .95em; border-radius:.8em; background: var(--fb-fill); border:1px solid var(--fb-fill-b);
           font-size:.82em; font-weight:600; transition: background .2s; }
-        .btn:active { background: rgba(255,255,255,.2); }
-        .btn.danger { border-color: rgba(255,90,95,.55); color:#ff9a9d; }
+        .btn:active { background: var(--fb-press); }
+        .btn.danger { border-color: var(--fb-alert); color:var(--fb-alert-t); }
         .btn[disabled] { opacity:.4; pointer-events:none; }
         .actions { display:flex; justify-content:flex-end; gap:.6em; }
       </style>
-      <ha-card>
+      <ha-card class="${dark ? "dark" : "light"}">
         ${banner}
         <div class="wrap">
           <div class="head glass">
@@ -259,6 +332,22 @@ class FreeboxUltraCard extends HTMLElement {
               <span class="val">${esc(ul.value)}<small>${esc(ul.unit)}</small></span>
             </button>
           </div>
+
+          ${showNet ? `
+          <div class="net glass">
+            ${c.wan_entity ? `<button data-more="${esc(c.wan_entity)}">
+              <span class="nl">Réseau (WAN)</span>
+              <span class="nv ${wanCls}"><span class="dot"></span>${wanTxt}</span>
+            </button>` : ""}
+            ${c.external_ip_entity ? `<button data-more="${esc(c.external_ip_entity)}">
+              <span class="nl">IP externe</span>
+              <span class="nv">${esc(ipTxt)}</span>
+            </button>` : ""}
+            ${c.uptime_entity ? `<button data-more="${esc(c.uptime_entity)}">
+              <span class="nl">En fonctionnement</span>
+              <span class="nv">${esc(upTxt)}</span>
+            </button>` : ""}
+          </div>` : ""}
 
           <div class="section-title">Températures et ventilation</div>
           <div class="grid">
@@ -343,6 +432,9 @@ class FreeboxUltraCardEditor extends HTMLElement {
       ent("wifi_entity", "switch"),
       ent("download_entity", "sensor"),
       ent("upload_entity", "sensor"),
+      ent("wan_entity", "binary_sensor"),
+      ent("external_ip_entity", "sensor"),
+      ent("uptime_entity", "sensor"),
       ent("temperature_entity", "sensor"),
       { name: "cpu_entities", selector: { entity: { domain: "sensor", multiple: true } } },
       ent("fan_entity", "sensor"),
@@ -351,6 +443,7 @@ class FreeboxUltraCardEditor extends HTMLElement {
       ent("reboot_button", "button"),
       {
         type: "grid", name: "", schema: [
+          { name: "show_network", selector: { boolean: {} } },
           { name: "show_cpu", selector: { boolean: {} } },
           { name: "show_calls", selector: { boolean: {} } },
           { name: "show_actions", selector: { boolean: {} } },
@@ -362,6 +455,19 @@ class FreeboxUltraCardEditor extends HTMLElement {
           { name: "temp_alert", selector: { number: { min: 30, max: 120, mode: "box" } } },
           { name: "scale", selector: { number: { min: 0.5, max: 2, step: 0.05, mode: "box" } } },
         ],
+      },
+      {
+        name: "theme",
+        selector: {
+          select: {
+            mode: "dropdown",
+            options: [
+              { value: "auto", label: "Automatique (thème de Home Assistant)" },
+              { value: "light", label: "Clair" },
+              { value: "dark", label: "Sombre" },
+            ],
+          },
+        },
       },
       {
         name: "image_mode",
@@ -385,7 +491,10 @@ class FreeboxUltraCardEditor extends HTMLElement {
       this._form.computeLabel = (s) => ({
         name: "Nom", device_tracker_entity: "Suivi de la Freebox (device_tracker)",
         wifi_entity: "Interrupteur Wi-Fi", download_entity: "Vitesse de téléchargement",
-        upload_entity: "Vitesse d'envoi", temperature_entity: "Température carte",
+        upload_entity: "Vitesse d'envoi", wan_entity: "État du réseau étendu (WAN)",
+        external_ip_entity: "IP externe", uptime_entity: "Temps de fonctionnement",
+        show_network: "Afficher le réseau (WAN, IP, uptime)", theme: "Thème",
+        temperature_entity: "Température carte",
         cpu_entities: "Températures CPU", fan_entity: "Ventilateur",
         missed_calls_entity: "Appels manqués", mark_calls_button: "Bouton « Marquer comme lus »",
         reboot_button: "Bouton « Redémarrer »", show_cpu: "Afficher les CPU",

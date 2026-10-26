@@ -1,6 +1,6 @@
 # Freebox Ultra Card (FR)
 
-Carte Home Assistant pour Freebox Ultra (V9) : état de la box, débits montant et descendant, températures (carte et CPU), ventilateur, appels manqués, interrupteur Wi-Fi et redémarrage. Style verre, optimisée pour iPhone, iPad et kiosque en mode portrait.
+Carte Home Assistant pour Freebox Ultra (V9) : état de la box, état du réseau étendu (WAN), IP externe, temps de fonctionnement, débits montant et descendant, températures (carte et CPU), ventilateur, appels manqués, interrupteur Wi-Fi et redémarrage. Style verre, thème clair/sombre automatique, optimisée pour iPhone, iPad et kiosque en mode portrait.
 
 Elle utilise les entités de l'intégration officielle **Freebox** de Home Assistant. Aucune dépendance externe.
 
@@ -20,6 +20,9 @@ device_tracker_entity: device_tracker.freebox_v9_r1
 wifi_entity: switch.freebox_v9_r1_wi_fi
 download_entity: sensor.freebox_v9_r1_vitesse_de_telechargement
 upload_entity: sensor.freebox_v9_r1_vitesse_d_envoi
+wan_entity: binary_sensor.freebox_server_etat_du_reseau_etendu_wan
+external_ip_entity: sensor.freebox_server_ip_externe
+uptime_entity: sensor.freebox_server_temps_de_fonctionnement
 temperature_entity: sensor.freebox_v9_r1_temperature_1
 cpu_entities:
   - sensor.freebox_v9_r1_temperature_cpu_0
@@ -30,12 +33,14 @@ fan_entity: sensor.freebox_v9_r1_ventilateur_1
 missed_calls_entity: sensor.freebox_v9_r1_appels_manques
 mark_calls_button: button.freebox_v9_r1_marquer_les_appels_comme_lus
 reboot_button: button.freebox_v9_r1_redemarrer
+show_network: true
 show_cpu: true
 show_calls: true
 show_actions: true
 temp_warn: 65
 temp_alert: 80
 scale: 1
+theme: auto   # auto, light ou dark
 image_mode: background
 image: /local/image/freebox.webp   # facultatif
 ```
@@ -50,17 +55,26 @@ Les valeurs par défaut correspondent à une Freebox Ultra nommée `freebox_v9_r
 | `device_tracker_entity` | `device_tracker.freebox_v9_r1` | État en ligne / hors ligne |
 | `wifi_entity` | `switch.freebox_v9_r1_wi_fi` | Interrupteur Wi-Fi (appui = bascule) |
 | `download_entity` / `upload_entity` | voir exemple | Débits (convertis automatiquement en kb/s, Mb/s ou Gb/s) |
+| `wan_entity` | `binary_sensor.freebox_server_etat_du_reseau_etendu_wan` | État de la connexion Internet (connecté / déconnecté) |
+| `external_ip_entity` | `sensor.freebox_server_ip_externe` | IP publique |
+| `uptime_entity` | `sensor.freebox_server_temps_de_fonctionnement` | Temps de fonctionnement (secondes ou date de démarrage, formaté en j / h / min) |
 | `temperature_entity` | `sensor.freebox_v9_r1_temperature_1` | Température carte |
 | `cpu_entities` | 4 capteurs CPU | Liste des températures CPU |
 | `fan_entity` | `sensor.freebox_v9_r1_ventilateur_1` | Vitesse du ventilateur |
 | `missed_calls_entity` | voir exemple | Nombre d'appels manqués |
 | `mark_calls_button` | voir exemple | Bouton « Marquer comme lus » |
 | `reboot_button` | voir exemple | Bouton de redémarrage (avec confirmation) |
-| `show_cpu` / `show_calls` / `show_actions` | `true` | Affiche ou masque les blocs |
+| `show_network` / `show_cpu` / `show_calls` / `show_actions` | `true` | Affiche ou masque les blocs |
 | `temp_warn` / `temp_alert` | `65` / `80` | Seuils de couleur des températures (°C) |
 | `scale` | `1` | Échelle globale de la carte |
+| `theme` | `auto` | `auto` suit le thème clair/sombre de Home Assistant, ou forcez `light` / `dark` |
 | `image_mode` | `background` | `background` (arrière-plan) ou `banner` (bandeau) |
 | `image` | vide | Image facultative |
+
+## Historique des versions
+
+- **1.1.0** : ajout du bloc réseau (WAN, IP externe, temps de fonctionnement) et thème clair/sombre automatique.
+- **1.0.0** : version initiale.
 
 Un appui sur un débit, une température ou le ventilateur ouvre la fiche de l'entité.
 
