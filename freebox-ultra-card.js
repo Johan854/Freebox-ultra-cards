@@ -1,3 +1,4 @@
+{ // bloc isolé : aucune variable ne fuit vers les autres cartes
 /*
  * Freebox Ultra Card (FR)
  * Carte Home Assistant pour Freebox Ultra (V9) : état, débits, températures,
@@ -6,7 +7,38 @@
  * Entités issues de l'intégration officielle « Freebox ».
  */
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.2.0";
+
+/* === NUANCE COMMUNE v2 (cartes Johan854) ===
+ * Bloc identique dans toutes les cartes. Options : nuance, nuance_perso, intensite.
+ * nuance "theme" (par défaut) : suit la variable carte-nuance du thème Home Assistant ;
+ * si elle n'existe pas, la carte garde ses couleurs d'origine. Intensité : 0 = neutre, 1 = normal, 2 = très coloré. */
+const GV_NUANCES = [["braise", "Braise (rouge)", "#e0524f"], ["ocean", "Océan (bleu)", "#2f8fd8"], ["lagon", "Lagon (turquoise)", "#1fb5a8"], ["foret", "Forêt (vert)", "#3fae5a"], ["lavande", "Lavande (violet)", "#8a63d8"], ["framboise", "Framboise (rose)", "#e05597"], ["ambre", "Ambre (orange)", "#e8902c"], ["ardoise", "Ardoise (neutre)", "#7d8595"]];
+const GV_DEFAULTS = { nuance: "theme", intensite: 1 };
+const gvAccent = (c) => {
+  const p = c && c.nuance_perso;
+  if (c && c.nuance === "perso") {
+    if (Array.isArray(p) && p.length === 3) return "#" + p.map((v) => Math.max(0, Math.min(255, Math.round(+v || 0))).toString(16).padStart(2, "0")).join("");
+    if (typeof p === "string" && /^#?[0-9a-f]{6}$/i.test(p.trim())) return "#" + p.trim().replace("#", "");
+  }
+  const n = GV_NUANCES.find((x) => x[0] === (c && c.nuance));
+  return n ? n[2] : "var(--carte-nuance)";
+};
+/* Variables posées sur <ha-card> : --g-bg-x (fond dégradé teinté) et --acc-ui-x (couleur d'accent).
+ * Sans nuance (thème sans carte-nuance), elles sont invalides : chaque carte retombe alors sur ses couleurs d'origine. */
+const gvStyle = (c, dark) => {
+  const i = Number(c && c.intensite), ai = Number.isFinite(i) ? Math.max(0, Math.min(2, i)) : 1;
+  const m = (pct, base) => `color-mix(in srgb,var(--acc-ui) ${+(pct * ai).toFixed(1)}%,${base})`;
+  const bg = dark ? `linear-gradient(160deg,${m(5, "#1b1e32")} 0%,${m(11, "#1f1b2c")} 55%,${m(22, "#1c1620")} 100%)`
+    : `linear-gradient(160deg,${m(2, "#f8f9fd")} 0%,${m(5, "#eef1f8")} 55%,${m(11, "#f8f8fa")} 100%)`;
+  return `--acc-ui:${gvAccent(c)};--g-bg-x:${bg};--acc-ui-x:color-mix(in srgb,var(--acc-ui) ${dark ? "80%,#fff" : "82%,#000"})`;
+};
+const GV_FIELDS = [
+  { name: "nuance", selector: { select: { mode: "dropdown", options: [{ value: "theme", label: "Selon le thème (couleurs d'origine)" }, ...GV_NUANCES.map((n) => ({ value: n[0], label: n[1] })), { value: "perso", label: "Personnalisée" }] } } },
+  { name: "nuance_perso", selector: { color_rgb: {} } },
+  { name: "intensite", selector: { number: { min: 0, max: 2, step: 0.1, mode: "slider" } } }];
+const GV_LABELS = { nuance: "Nuance de couleur", nuance_perso: "Couleur personnalisée (nuance « Personnalisée »)", intensite: "Intensité de la nuance" };
+/* === FIN NUANCE COMMUNE === */
 
 const DEFAULTS = {
   name: "Freebox Ultra",
@@ -35,7 +67,7 @@ const DEFAULTS = {
   temp_warn: 65,
   temp_alert: 80,
   scale: 1,
-  theme: "auto", // auto (suit le thème de Home Assistant), light, dark
+  theme: "auto", nuance: "theme", intensite: 1, // auto (suit le thème de Home Assistant), light, dark
   image_mode: "background",
   image: "",
 };
@@ -225,7 +257,7 @@ class FreeboxUltraCard extends HTMLElement {
         :host { display:block; font-size: calc(16px * ${Number(c.scale) || 1}); }
         * { box-sizing: border-box; }
         ha-card.dark {
-          --fb-text: #f4f6fb; --fb-bg: linear-gradient(160deg, #1b1e32 0%, #241a2a 55%, #2d1519 100%);
+          --fb-text: #f4f6fb; --fb-bg: var(--g-bg-x,linear-gradient(160deg, #1b1e32 0%, #241a2a 55%, #2d1519 100%));
           --fb-border: rgba(255,255,255,.14); --fb-shadow: 0 .6em 2em rgba(0,0,0,.35);
           --fb-glass: rgba(255,255,255,.07); --fb-glass-b: rgba(255,255,255,.13);
           --fb-fill: rgba(255,255,255,.09); --fb-fill-b: rgba(255,255,255,.16); --fb-press: rgba(255,255,255,.2);
@@ -234,7 +266,7 @@ class FreeboxUltraCard extends HTMLElement {
           --fb-ok-bg: rgba(61,220,132,.18); --fb-alert-bg: rgba(255,90,95,.12);
         }
         ha-card.light {
-          --fb-text: #1c2030; --fb-bg: linear-gradient(160deg, #f8f9fd 0%, #eef1f8 55%, #f8eff0 100%);
+          --fb-text: #1c2030; --fb-bg: var(--g-bg-x,linear-gradient(160deg, #f8f9fd 0%, #eef1f8 55%, #f8eff0 100%));
           --fb-border: rgba(20,24,40,.12); --fb-shadow: 0 .4em 1.4em rgba(20,24,40,.12);
           --fb-glass: rgba(255,255,255,.7); --fb-glass-b: rgba(20,24,40,.1);
           --fb-fill: rgba(20,24,40,.05); --fb-fill-b: rgba(20,24,40,.14); --fb-press: rgba(20,24,40,.12);
@@ -307,7 +339,7 @@ class FreeboxUltraCard extends HTMLElement {
         .btn[disabled] { opacity:.4; pointer-events:none; }
         .actions { display:flex; justify-content:flex-end; gap:.6em; }
       </style>
-      <ha-card class="${dark ? "dark" : "light"}">
+      <ha-card class="${dark ? "dark" : "light"}" style="${gvStyle(this._config, dark)}">
         ${banner}
         <div class="wrap">
           <div class="head glass">
@@ -468,7 +500,7 @@ class FreeboxUltraCardEditor extends HTMLElement {
             ],
           },
         },
-      },
+      }, ...GV_FIELDS,
       {
         name: "image_mode",
         selector: {
@@ -488,7 +520,7 @@ class FreeboxUltraCardEditor extends HTMLElement {
   _build() {
     if (!this._form) {
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) => ({
+      this._form.computeLabel = (s) => ({ ...GV_LABELS,
         name: "Nom", device_tracker_entity: "Suivi de la Freebox (device_tracker)",
         wifi_entity: "Interrupteur Wi-Fi", download_entity: "Vitesse de téléchargement",
         upload_entity: "Vitesse d'envoi", wan_entity: "État du réseau étendu (WAN)",
@@ -533,3 +565,4 @@ console.info(
   "color:#fff;background:#cd1e25;font-weight:700;border-radius:3px 0 0 3px;padding:2px 4px",
   "color:#cd1e25;background:#fff;font-weight:700;border-radius:0 3px 3px 0;padding:2px 4px"
 );
+}
